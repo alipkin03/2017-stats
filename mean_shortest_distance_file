@@ -1,0 +1,140 @@
+#this program is translated from the separation.py supplement from Menche et al 2015
+#it calculates the network-based distance of a single gene set
+
+#set working directory
+setwd("/Users/annalipkin/Documents/BMI206/Project Stuff")
+
+#call igraph package
+library(igraph)
+
+#call data files
+interactome = as.matrix(read.table("./interactome.txt", sep="\t"))                                      #all categorical
+gene_exp_sig = as.data.frame(read.table("./gene expression significance.txt", header=TRUE, sep="\t"))   #dataframe because column names
+disease_tissue_pair = as.data.frame(read.table("./disease tissue pairs.txt", sep="\t"))                 #need dataframe because different data types (characters v numeric)
+
+#set correct column names
+colnames(interactome) <- c('Gene ID 1', 'Gene ID 2', 'Data Source')
+colnames(disease_tissue_pair) <-c('disease index','tissue index','disease name','tissue name','lcc size','expressed genes','expected lcc','standard deviation lcc', 'z score')
+
+#---start function definitions----#
+
+#make a graph using interactome as edgelist--the baseline network
+interactome<-cbind(GeneA=pmin(interactome[,1], interactome[,2]),
+                   GeneB=pmax(interactome[,1], interactome[,2]))
+
+edgelist<-interactome[,1:2]
+read_network<-function(edgelist){
+  network<-graph_from_edgelist(edgelist)
+  return(network)}
+
+network<-read_network(edgelist)
+
+#simply graph by removing loops and multiple edges
+#a multiple edge is when an edge has the exact same two vertices
+remove_self_links<-function(network){
+  simple<-simplify(network, remove.multiple=TRUE, remove.loops=TRUE)
+  return(simple)}
+
+network<-remove_self_links(network)
+
+#here is where I'll need to start looping and need to pull in numbers from Capria's files
+#read gene list
+#genes must be provided as a table. only the first column will be used
+read_gene_list<-function(number_genes_in_tissue){
+  genes<-sample(gene_exp_sig[,1], number_genes_in_tissue, replace=FALSE)
+  return(genes)}
+
+#this is an example from prefrontal cortex
+genes<-read_gene_list(2644)
+
+#get path lengths for single set
+#calculate the shortest paths of a given set of genes in a given network
+#results are stored in a dictionary of dictionaries
+
+get_pathlengths_for_single_set<-function(given_network, given_genes){
+  
+  #remove all nodes that are not in network
+  all_genes_in_network <-setdiff(unique(unlist(c(network))),"")
+  gene_set= intersect(given_genes, all_genes_in_network)
+  
+  all_path_lengths = list()
+  
+  for (gene1 in gene_set){
+    if (!all_path_lengths%in%names(gene1)){
+        all_path_lengths[gene1] = list()}
+      for (gene2 in gene_set){
+        if (gene1<gene2){
+          try('l=shortest_paths(network, gene1, gene2)',
+              'c(all_path_lengths[gene1][gene2] = l)', silent = FALSE)}}
+    }
+return(all_path_lengths)
+}
+
+#this is not working correctly
+#Warning messages:
+#Error in if (!all_path_lengths %in% names(gene1)) { : 
+    #argument is of length zero
+ 
+get_pathlengths_for_two_sets(given_network, given_gene_set1, given_gene_set2){
+  #calculate the shortest paths between two given sets of genes in a given network
+  
+  #remove all nodes that are not in the network
+  all_genes_in_network <-setdiff(unique(unlist(c(network))),"")
+  gene_set1 <- intersect(given_gene_set1, all_genes_in_network)
+  gene_set2 <- intersect(given_gene_set2, all_genes_in_network)
+  
+  all_path_lengths=list()
+  
+  #calculate the distance of all possible pairs
+    for (gene1 in gene_set1){
+      if(!all_path_lengths%in%names(gene1)){
+          all_path_lengths[gene1] = list()}
+      for (gene2 in gene_set2){
+        if (gene1 != gene2){
+          try('l=shortest_paths(network, v=gene1, to=gene2)')
+              if(gene1<gene2){
+            all_path_lengths[gene1][gene2] = l}}
+          if (!all_path_lengths%in%names(gene2)){
+              all_path_lengths[gene2]=list()
+              all_path_lengths[gene2][gene1] = l}
+      }
+      }
+  return(all_path_lengths)
+}
+#not recognizing gene_set1...why not?
+#Error: no function to return from, jumping to top level
+
+calc_mean_shortest_distance<-function(given_network, given_genes){
+  #calculate the mean shortest distance for a set of genes in a given network
+  #remove all nodes that are not in network
+  all_genes_in_network <-setdiff(unique(unlist(c(network))),"")
+  gene_set<- intersect(given_genes, all_genes_in_network) #wrong dimensions here, apparently
+  gene_set<-cbind(GeneA=pmin(gene_set[,1], gene_set[,2]),
+                  GeneB=pmax(gene_set[,1], gene_set[,2]))
+  
+  #get the network distance for all gene pairs
+  all_path_lengths = get_pathlengths_for_single_set(given_network, given_genes)
+  
+  all_distances = ''
+  
+  #going through all gene pairs
+  
+  for (GeneA in gene_set){
+    all_distances_A=''
+    for (GeneB in gene_set){
+      if (GeneA < GeneB){
+        if (all_path_lengths[GeneA]%in%names(GeneB)){
+          all_distances_A=paste(all_path_lengths[GeneA][GeneB])}}
+      if (GeneB < GeneA){
+        if (all_path_lengths[GeneB]%in%names(GeneA)){
+          all_distances_A=paste(all_path_lengths[GeneB][GeneA])}}}
+        }
+  if (length(all_distances_A) > 0){
+    l_min=min(all_distances_A)
+    all_distances=paste(all_distances(l_min))}
+  
+  mean_shortest_distance = mean(all_distances)
+  return(mean_shortest_distance)
+}
+
+#next, need to figure out how to connect to disease and run through 1000x for each tissue a bunch of times
