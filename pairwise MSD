@@ -1,0 +1,109 @@
+#this program calculates the mean shortest distance to the closest gene related to the same disease
+#it creates 1000 random networks of genes based on the number of genes significantly expressed in a tissue
+#these random networks will create a null distribution of mean shortest distances which we can use to compute the significance of the actual observed tissue network
+
+
+#set working directory
+setwd("/Users/annalipkin/Documents/BMI206/Project Stuff")
+
+#call igraph package and hash package
+library(igraph)
+library("hash") #install.packages("hash")
+
+#call data files
+interactome<-as.matrix(read.table("./interactome.txt", sep="\t", stringsAsFactors = FALSE)) #all categorical, needs to be matrix for interaction dictionary to work
+expression<-as.data.frame(read.table("./gene expression significance.txt", header=TRUE, sep="\t", stringsAsFactors = FALSE))   #dataframe because column names
+
+#set correct column names
+colnames(interactome) <- c('Gene ID 1', 'Gene ID 2', 'Data Source')
+interactome<-trimws(interactome)
+
+##Mapping gene_ID to probe IDs (Leah)
+#get the gene list from expression data
+gene_ID<-as.character(expression[,1])
+
+#convert gene ids to probe ids
+source("https://bioconductor.org/biocLite.R")
+biocLite("hgu133a.db")
+library(hgu133a.db)
+#keytypes(db)
+ids=gene_ID
+fromKey="ENTREZID"
+toKey="PROBEID"
+db=hgu133a.db
+mappedIDs<-AnnotationDbi::select(db,keys=ids,keytype=fromKey,columns=c(fromKey,toKey))
+
+#head(mappedIDs)
+#sum(is.na(mappedIDs))
+#probeID<-mappedIDs[,2]
+#head(probeID)
+#unknownprobes<-mappedIDs[is.na(probeID),]
+#unknownprobes<-unknownprobes$ENTREZID
+#this contains the IDs of all the unmapped (and only the unmapped) genes
+
+##To select only matched geneIDs:
+#select the first instance only of a mapped ID, remove "NA" values
+x=mappedIDs[match(ids,mappedIDs[,1]),]
+probeID<-x[,2]
+allgeneIDs<-x[,1]
+knownprobes<-x[!is.na(probeID),]
+#write.table(knownprobes,"mappedgenes02.txt",sep="\t",col.names=T)
+
+#collect all the gene identifiers from interactome, combine into one list, remove duplicates
+interactome1<-read.table("interactome.txt",sep="\t",header=T) #read in interactome in a different format to work with both pieces of code
+genelist<-c(interactome1[,1],interactome1[,2])  
+genelist<-as.character(unique(genelist))
+
+#select geneIDs present in both the mapped gene list from the expression file and the unique interactome gene list
+finalgenelist<-genelist[match(allgeneIDs,genelist)]
+finalgenelist<-finalgenelist[!is.na(finalgenelist)]
+
+
+#create a dictionary of dictionaries (equivalent) to map every gene to the genes it interacts with
+interaction_dictionary<-hash()
+n<-length(interactome[,1])
+for (i in 1:n){
+  geneA<-interactome[i,1]
+  geneB<-interactome[i,2]
+  if (is.null(interaction_dictionary[[geneA]])){
+    interaction_dictionary[[geneA]]<-hash()}
+  interaction_dictionary[[geneA]][geneB]<-as.character(geneB)
+}
+
+##getting gene significance counts per tissue
+#build a table of our probe-matched genes
+exp_sig2 = expression[(expression[,1] %in% finalgenelist),] 
+
+#for all tissues
+sig_counts = NULL
+for (i in 1:65){
+  sig_counts[i]=length(which(exp_sig2[,i]>1))
+}
+sig_counts[39] #check the value for pfc
+sig_counts<-sig_counts[2:65]#removing the gene ID column
+
+#then, sample that number of genes
+#and take the pairwise MSD of that 
+MSD_table=matrix(nrow=1000,ncol=64)
+for(i in 1:1000){   
+  for (j in 1:64){
+  randgenes<-sample(x = finalgenelist, sig_counts[j], replace=FALSE)
+
+      network<-make_empty_graph(n=length(randgenes), directed=FALSE)
+      network<-set.vertex.attribute(network, 'name', value=randgenes)
+      for(geneA in randgenes){
+        if (!is.null(interaction_dictionary[[geneA]])){
+          for(geneB in randgenes){
+            if(!is.null(interaction_dictionary[[geneA]]['geneB']))
+              network<-add_edges(network, c(geneA, geneB))}}
+        network<-simplify(network, remove.multiple=TRUE, remove.loops=TRUE)
+        distances<-distances(network)
+        is.na(distances) <- do.call(cbind,lapply(distances, is.infinite))
+        MSD=mean(distances, na.rm=TRUE)
+        MSD_table[i,j]=MSD}
+  }}
+
+#to do next(maybe):
+#load in the disease genes (maybe a separate file per disease? collapse the OMIM and GWAS columns)
+#then calculate the mean shortest distance for each disease in each tissue
+
